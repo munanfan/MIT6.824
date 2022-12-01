@@ -260,12 +260,15 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 // 请求
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	//fmt.Println("Index'm ", rf.me, ",receive a append from ", args.LeaderId, "args.Term ", args.Term, "log length is ", len(rf.log), ",my lastApplyIndex:", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",entry length:", len(args.Entries), ",args.prevLogIndex:", args.PrevLogIndex, ",args.prevLogTerm:", args.PrevLogTerm, ",my lastIncludeIndex:", rf.lastIncludedIndex, ",my lastIncludeTerm:", rf.lastIncludedTerm)
 	reply.Term = rf.currentTerm
 	// 请求者的Term小于自己 或者 自己并非follower，拒绝Append
 	if args.Term < rf.currentTerm {
+		//fmt.Println("Index'm ", rf.me, ",receive a append from ", args.LeaderId, ",he out of date, my term is ", rf.currentTerm, ",request Term is ", args.Term, ",nowtime:", time.Now().UnixMilli())
 		reply.Success = false
 		reply.ConflictIndex = -1
 		reply.ConflictTerm = -1
+		//fmt.Println("Index'm ", rf.me, ",finish receive a append from ", args.LeaderId, "log length is ", len(rf.log))
 		return
 	}
 	rf.mu.Lock()
@@ -278,6 +281,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 可能是旧Leader，也可能是正在和自己竞争选举
 		rf.identity = 1
 		rf.totalPreVotes = 0
+		//fmt.Println("Index'm ", rf.me, ",receive a append from ", args.LeaderId, ", change my identity ", rf.identity)
 	}
 	// 判断PrevLogIndex是否符合
 	rf.lastElectionTime = time.Now().UnixMilli()
@@ -286,15 +290,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.ConflictTerm = -1
 		reply.ConflictIndex = rf.lastIncludedIndex + len(rf.log)
+		//fmt.Println("Index'm ", rf.me, ",finish receive a append from, PrevLogIndex不存在 ", args.LeaderId, "log length is ", len(rf.log))
 		return
 	}
 	if (args.PrevLogIndex == rf.lastIncludedIndex && args.PrevLogTerm == rf.lastIncludedTerm) || (args.PrevLogIndex > rf.lastIncludedIndex && rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term == args.PrevLogTerm) {
 		// 日志至少比自己新，符合要求，开始接受Append
 		reply.Success = true
+		//fmt.Println("args.logLength", args.PrevLogIndex+1+len(args.Entries), "my log Length:", len(rf.log))
 		if args.PrevLogIndex+len(args.Entries) > rf.lastIncludedIndex+len(rf.log)-1 {
 			// 发送的日志比自己的日志长，直接替换
+			//fmt.Println("length before:", len(rf.log))
 			rf.log = rf.log[:args.PrevLogIndex-rf.lastIncludedIndex+1]
 			rf.log = append(rf.log, args.Entries...)
+			//fmt.Println("length after:", len(rf.log))
 		} else {
 			// 从前往后看是否有不同
 			for i := 0; i < len(args.Entries); i++ {
@@ -317,34 +325,41 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.ConflictIndex = -1
 		reply.ConflictTerm = -1
 		rf.persist()
+		//fmt.Println("Index'm ", rf.me, ",finish receive a append from accept ", args.LeaderId, ",my log length is ", len(rf.log), ",argCommitIndex:", args.LeaderCommit, ",myCommitIndex:", rf.commitIndex)
 		return
 	} else {
+		// rf.log[args.PrevLogIndex].Term != args.PrevLogTerm
 		if args.PrevLogIndex == rf.lastIncludedIndex {
 			reply.ConflictTerm = rf.lastIncludedTerm
 		} else if args.PrevLogIndex > rf.lastIncludedIndex {
 			reply.ConflictTerm = rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term
 		}
-		for i := args.PrevLogIndex - rf.lastIncludedIndex; i > 0; i-- {
+		for i := args.PrevLogIndex - rf.lastIncludedIndex; i >= 0; i-- {
 			if rf.log[i].Term == reply.ConflictTerm {
+				//fmt.Println("i:", i, ",term:", rf.log[i].Term, ",command:", rf.log[i].Command)
 				reply.ConflictIndex = i + rf.lastIncludedIndex
 			} else {
 				break
 			}
 		}
 		reply.Success = false
+		//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, ",rf.log[args.PrevLogIndex].Term != args.PrevLogTerm,finish receive a append from ", args.LeaderId, "log length is ", len(rf.log), ",ConflictTerm:", reply.ConflictTerm, ",ConflictIndex:", reply.ConflictIndex, ",PrevlogIndex:", args.PrevLogIndex, ",PrevlogTerm:", args.PrevLogTerm)
 		return
 	}
 }
 
 // 处理投票请求
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, ",time:", time.Now().UnixMilli(), ",his term is ", args.Term)
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 	// 请求者的Term小于自己，不投票
 	if args.Term < rf.currentTerm {
+		//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, ",out of date, his term is ", args.Term, "not vote him")
 		return
 	}
 	rf.mu.Lock()
+	//fmt.Println("RequestVote: get lock ")
 	defer rf.mu.Unlock()
 	// 判断日志是否比自己新
 	length := len(rf.log)
@@ -355,16 +370,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.voteFor = args.CandidateId
 			rf.lastElectionTime = time.Now().UnixMilli()
 			rf.identity = 1
+			//fmt.Println("313 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 			rf.currentTerm = args.Term
+			//fmt.Println("RequestVote: 312 ", oldTerm, " to ", rf.currentTerm)
+			//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, ",lastLogTerm larger than me ", args.LastLogTerm, ",his term is ", args.Term, " ,vote him")
 		} else {
 			// check whether the term bigger than me
 			if args.Term > rf.currentTerm {
+				//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, ",lastLogTerm larger than me ", args.LastLogTerm, ",his term is ", args.Term, " larger than me, vote him")
 				// term高于我，直接投票
 				rf.voteFor = args.CandidateId
 				rf.currentTerm = args.Term
+				//fmt.Println("RequestVote: 322 ", oldTerm, " to ", rf.currentTerm)
 				rf.lastElectionTime = time.Now().UnixMilli()
 				rf.identity = 1
+				//fmt.Println("330 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 				reply.VoteGranted = true
+			} else {
+				//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, ",lastLogTerm larger than me ", args.LastLogTerm, ",his term is ", args.Term, " smaller than me, not vote him")
 			}
 		}
 	} else if (length == 1 && args.LastLogTerm == rf.lastIncludedTerm) || (length != 1 && args.LastLogTerm == rf.log[length-1].Term) {
@@ -376,18 +399,28 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 				rf.voteFor = args.CandidateId
 				rf.lastElectionTime = time.Now().UnixMilli()
 				rf.identity = 1
+				//fmt.Println("346 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 				rf.currentTerm = args.Term
+				//fmt.Println("RequestVote: 341 ", oldTerm, " to ", rf.currentTerm)
+				//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term,log longer than me  vote him")
 			} else {
 				// check whether the term bigger than me
 				if args.Term > rf.currentTerm {
 					// term高于我，直接投票
 					rf.voteFor = args.CandidateId
 					rf.currentTerm = args.Term
+					//fmt.Println("RequestVote: 350 ", oldTerm, " to ", rf.currentTerm)
 					rf.lastElectionTime = time.Now().UnixMilli()
 					rf.identity = 1
+					//fmt.Println("362 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 					reply.VoteGranted = true
+					//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term, term larger than me  vote him")
+				} else {
+					//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term, term smaller than me  not vote him")
 				}
 			}
+		} else {
+			//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term, log length smaller than me  not vote him")
 		}
 	}
 }
@@ -424,6 +457,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.lastIncludedIndex = args.LastIncludedIndex
 		rf.lastIncludedTerm = args.LastIncludedTerm
 	}
+	//fmt.Println("InstallSnapshot:", "rf.lastIncludedIndex => ", rf.lastIncludedIndex, ",rf.lastIncludedTerm => ", rf.lastIncludedTerm, ",args.lastIncludedIndex => ", args.LastIncludedIndex, ", args.lastIncludedTerm => ", args.LastIncludedTerm, ",lastApplyIndex before:", rf.lastApplied)
 	// 更新ApplyIndex和CommitIndex
 	if rf.lastApplied < rf.lastIncludedIndex {
 		rf.lastApplied = rf.lastIncludedIndex
@@ -431,6 +465,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if rf.commitIndex < rf.lastIncludedIndex {
 		rf.commitIndex = rf.lastIncludedIndex
 	}
+	//fmt.Println("InstallSnapshot:", "rf.lastIncludedIndex => ", rf.lastIncludedIndex, ",rf.lastIncludedTerm => ", rf.lastIncludedTerm, ",args.lastIncludedIndex => ", args.LastIncludedIndex, ", args.lastIncludedTerm => ", args.LastIncludedTerm, ",lastApplyIndex after:", rf.lastApplied)
 	msg := ApplyMsg{}
 	msg.Command = nil
 	msg.CommandValid = false
@@ -467,11 +502,12 @@ func (rf *Raft) handlerInstallSnapshot(serverIndex int, args *InstallSnapshotArg
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) { // ok
+	//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pro vote request of ", args.CandidateId, ",time:", time.Now().UnixMilli(), ",his term is ", args.Term)
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 	// 请求者的Term小于自己，不投票
 	if args.Term < rf.currentTerm {
-		//fmt.Println("I'm ", rf.me, ",term is ", rf.currentTerm, "receive the provote request of ", args.CandidateId, ",out of date, his term is ", args.Term, "not vote him")
+		//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the provote request of ", args.CandidateId, ",out of date, his term is ", args.Term, "not vote him")
 		return
 	}
 	rf.mu.Lock()
@@ -482,10 +518,12 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		if args.Term == rf.currentTerm {
 			if rf.voteFor == -1 {
 				reply.VoteGranted = true
+				//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pre vote request of ", args.CandidateId, ",lastLogTerm larger than me, and Index have vote ", args.LastLogTerm, ",his term is ", args.Term, " ,vote him")
 			}
 		} else {
 			// term高于我，直接投票
 			reply.VoteGranted = true
+			//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pre vote request of ", args.CandidateId, ",lastLogTerm larger than me, and term higher than me ", args.LastLogTerm, ",his term is ", args.Term, " ,vote him")
 		}
 	} else if (length == 1 && args.LastLogIndex == rf.lastIncludedIndex) || (length != 1 && args.LastLogTerm == rf.log[length-1].Term) {
 		// 最后一个日志的Term相等，比较长度
@@ -493,13 +531,19 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			// log longger than me
 			if rf.voteFor == -1 {
 				reply.VoteGranted = true
+				//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pre vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term,log longer than me and Index have vote,  vote him")
 			} else {
 				// check whether the term bigger than me
 				if args.Term > rf.currentTerm {
 					// term高于我，直接投票
 					reply.VoteGranted = true
+					//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pre vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term, term larger than me  vote him")
+				} else {
+					//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pre vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term, term smaller than me  not vote him")
 				}
 			}
+		} else {
+			//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, "receive the pro vote request of ", args.CandidateId, "args.LastLogTerm == rf.log[length-1].Term, log length smaller than me  not vote him")
 		}
 	}
 }
@@ -590,18 +634,25 @@ func (rf *Raft) makeAppendMessage(serverIndex int) *AppendEntriesArgs { // ok
 }
 
 func (rf *Raft) handlerRequestPreVoteReply(serverIndex int, args *RequestVoteArgs, reply *RequestVoteReply) { // ok
+	//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",term is", rf.currentTerm, ",receive the prevote result")
+	//fmt.Println("Index'm ", rf.me, args.Term != rf.currentTerm+1, " ", reply.Term > rf.currentTerm, " ", rf.totalPreVotes >= (len(rf.peers)/2+1), " ", rf.identity != 2)
 	// 当前和发送时的Term不同 或者 自己过时 或者 已经获得大部分投票 或者 当前已经不是投票者身份，丢弃
 	if args.Term != rf.currentTerm+1 || reply.Term > rf.currentTerm || rf.totalPreVotes >= (len(rf.peers)/2+1) || rf.identity != 2 {
+		//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",term is", rf.currentTerm, ",solve prevote false")
 		return
 	}
+	//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",term is", rf.currentTerm, ",totalPrevote is ", rf.totalPreVotes)
 	if reply.VoteGranted {
 		rf.mu.Lock()
+		//fmt.Println("handlerRequestPreVoteReply: get lock")
 		rf.totalPreVotes++
 		if rf.totalPreVotes >= (len(rf.peers)/2 + 1) {
+			//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",term is", rf.currentTerm, ",pre vote success")
 			// 预投票成功，准备发送真实投票请求
 			rf.currentTerm++
 			rf.totalVotes = 1
 			rf.voteFor = rf.me
+			//fmt.Println("handlerRequestPreVoteReply: lose lock")
 			rf.mu.Unlock()
 			msg := rf.makeVoteMessage(false)
 			for i := 0; i < len(rf.peers); i++ {
@@ -612,6 +663,7 @@ func (rf *Raft) handlerRequestPreVoteReply(serverIndex int, args *RequestVoteArg
 			}
 			return
 		}
+		//fmt.Println("handlerRequestPreVoteReply: lose lock")
 		rf.mu.Unlock()
 	}
 }
@@ -623,12 +675,16 @@ func (rf *Raft) handlerRequestVoteReply(serverIndex int, args *RequestVoteArgs, 
 	}
 	if reply.VoteGranted {
 		rf.mu.Lock()
+		//fmt.Println("handlerRequestVoteReply: get lock")
 		rf.totalVotes++
 		if rf.totalVotes >= (len(rf.peers)/2 + 1) {
 			// 选举成功，成为leader
 			rf.identity = 3
+			//fmt.Println("Index'm ", rf.me, ",become the leader, term is ", rf.currentTerm)
+			//fmt.Println("542 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 			rf.totalVotes = 0
 			rf.totalPreVotes = 0
+			//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, ",become the leader, my log length is ", len(rf.log))
 			// 重置nextIndex和matchIndex
 			for i := 0; i < len(rf.peers); i++ {
 				rf.nextIndex[i] = rf.lastIncludedIndex + len(rf.log)
@@ -639,17 +695,19 @@ func (rf *Raft) handlerRequestVoteReply(serverIndex int, args *RequestVoteArgs, 
 					rf.matchIndex[i] = 0
 				}
 			}
+			//fmt.Println("handlerRequestVoteReply: lose lock")
 			rf.mu.Unlock()
 			// 发送Heartbeat
 			go rf.CheckHeartbeat()
 			return
 		}
+		//fmt.Println("handlerRequestVoteReply: lose lock")
 		rf.mu.Unlock()
 	}
 }
 
 func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesArgs, reply *AppendEntriesReply) { // ok
-	//fmt.Println("I'm ", rf.me, ",receive the reply of append ", serverIndex, " result is ", reply.Success, ",replyTerm ", reply.Term)
+	//fmt.Println("Index'm ", rf.me, ",receive the reply of append ", serverIndex, " result is ", reply.Success, ",replyTerm ", reply.Term)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.identity != 3 {
@@ -658,9 +716,12 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 	if reply.Term > rf.currentTerm {
 		// 自己过时
 		rf.identity = 1
+		//fmt.Println("575 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 		rf.currentTerm = reply.Term
+		//fmt.Println("RequestVote: 565 ", oldTerm, " to ", rf.currentTerm)
 		rf.voteFor = -1 // 清空自己的投票
 		rf.lastElectionTime = time.Now().UnixMilli()
+		//fmt.Println("Index'm ", rf.me, ",receive the reply of append ", serverIndex, " out of date")
 		return
 	}
 	if args.Term != rf.currentTerm {
@@ -669,9 +730,11 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 	}
 	// 接收成功
 	if reply.Success {
+		//fmt.Println("reply success: last nextIndex => ", rf.nextIndex[serverIndex], ",receive length is ", args.PrevLogIndex+len(args.Entries)+1)
 		rf.nextIndex[serverIndex] = args.PrevLogIndex + len(args.Entries) + 1
 		rf.matchIndex[serverIndex] = rf.nextIndex[serverIndex] - 1
 	} else {
+		//fmt.Println("Index'm ", rf.me, ",appear conflict")
 		// 处理冲突，更新nextIndex
 		if reply.ConflictTerm == -1 {
 			if reply.ConflictIndex >= 0 {
@@ -692,6 +755,9 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 			}
 			if !flag { // 没有找到conflictTerm
 				rf.nextIndex[serverIndex] = reply.ConflictIndex
+				//fmt.Println("don't find ConflictTerm, set rf.nextIndex[serverIndex]:", rf.nextIndex[serverIndex])
+			} else {
+				//fmt.Println("find ConflictTerm, set rf.nextIndex[serverIndex]:", rf.nextIndex[serverIndex])
 			}
 		}
 	}
@@ -699,6 +765,7 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 
 func (rf *Raft) sendHeartbeatToFollower(serverIndex int) { // ok
 	rf.mu.Lock()
+	//fmt.Println("sendHeartbeatToFollower: get lock ")
 	if rf.lastIncludedIndex != 0 && rf.nextIndex[serverIndex] <= rf.lastIncludedIndex {
 		// 说明需要的log已经被Leader丢弃，需要发送快照
 		args := new(InstallSnapshotArgs)
@@ -715,6 +782,7 @@ func (rf *Raft) sendHeartbeatToFollower(serverIndex int) { // ok
 	}
 	args := new(AppendEntriesArgs)
 	args.PrevLogIndex = rf.nextIndex[serverIndex] - 1
+	//fmt.Println("sendHeartbeatToFollower: args.PrevLogIndex => ", args.PrevLogIndex)
 	if args.PrevLogIndex == rf.lastIncludedIndex {
 		args.PrevLogTerm = rf.lastIncludedTerm
 	} else {
@@ -725,7 +793,15 @@ func (rf *Raft) sendHeartbeatToFollower(serverIndex int) { // ok
 	copy(args.Entries, rf.log[rf.nextIndex[serverIndex]-rf.lastIncludedIndex:])
 	args.LeaderId = rf.me
 	args.Term = rf.currentTerm
+	//fmt.Println("Index'm ", rf.me, ",Send heatbeat appendEntries to ", rf.me, ", The log of PrevLogIndex term is ", rf.log[args.PrevLogIndex].Term, ",command is ", rf.log[args.PrevLogIndex].Command)
+	if args.PrevLogIndex+1 < len(rf.log) {
+		//fmt.Println("the nextlog of args.PrevLogIndex is ", rf.log[args.PrevLogIndex+1].Command)
+	}
+	if len(args.Entries) != 0 {
+		//fmt.Println("the start of of args.Entries is ", args.Entries[0].Command)
+	}
 	reply := new(AppendEntriesReply)
+	//fmt.Println("sendHeartbeatToFollower to ", serverIndex, ": lose lock ")
 	rf.mu.Unlock()
 	state := false
 	if rf.identity == 3 {
@@ -825,6 +901,7 @@ func (rf *Raft) CheckHeartbeat() { // ok
 			rf.lastHeartbeatTime = nowTime
 			for i := 0; i < len(rf.peers); i++ {
 				if i != rf.me {
+					//fmt.Println("Index'm ", rf.me, ",send Heartbeat to ", i, ",my log length is ", len(rf.log), ",rf.lastIncludeIndex:", rf.lastIncludedIndex)
 					go rf.sendHeartbeatToFollower(i)
 				}
 			}
@@ -837,18 +914,21 @@ func (rf *Raft) CheckApplyCommand() { // ok
 	// 当Raft没有被Kill，就一直运行
 	for rf.killed() == false {
 		rf.mu.Lock()
+		//fmt.Println("Index'm ", rf.me, ", CheckApplyCommand: get lock, lastApplu, ", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",lastIncludedIndex:", rf.lastIncludedIndex, ",log length:", len(rf.log))
 		if rf.identity == 3 {
 			// 检查是否能够更新commitIndex
 			sortedMatchIndex := make([]int, len(rf.peers))
 			copy(sortedMatchIndex, rf.matchIndex)
 			sort.Ints(sortedMatchIndex)
 			middleIndex := (len(rf.peers)+1)/2 - 1
+			//fmt.Println("Index'm ", rf.me, ", CheckApplyCommand: get lock, lastApplu, ", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",sortedMatchIndex[middleIndex]:", sortedMatchIndex[middleIndex])
 			if rf.commitIndex < sortedMatchIndex[middleIndex] && rf.log[sortedMatchIndex[middleIndex]-rf.lastIncludedIndex].Term == rf.currentTerm {
 				// commit可以更新，并且是当前的Term
 				rf.commitIndex = sortedMatchIndex[middleIndex]
 			}
 		}
 		rf.mu.Unlock()
+		//fmt.Println("Index'm ", rf.me, ",CheckApplyCommand: lose lock")
 		nowCommitIndex := rf.commitIndex
 		if rf.lastApplied < nowCommitIndex {
 			for i := rf.lastApplied + 1; i <= nowCommitIndex; i++ {
@@ -857,6 +937,8 @@ func (rf *Raft) CheckApplyCommand() { // ok
 					rf.mu.Unlock()
 					break
 				}
+				//fmt.Println("Index'm ", rf.me, ",log length: ", len(rf.log), ",lastIncludedIndex:", rf.lastIncludedIndex, "rf.lastApply:", rf.lastApplied)
+				//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",log length ", len(rf.log), ",applyIndex ", rf.lastApplied+1, ",command is ", rf.log[i-rf.lastIncludedIndex].Command)
 				msg := ApplyMsg{}
 				msg.CommandIndex = i
 				msg.CommandValid = true
@@ -874,7 +956,7 @@ func (rf *Raft) CheckApplyCommand() { // ok
 				rf.mu.Unlock()
 			}
 		}
-		time.Sleep(40 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -908,9 +990,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) { // ok
 	rf.nextIndex[rf.me] = index + 1
 	rf.matchIndex[rf.me] = index
 	rf.persist()
+	//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",receive a command ", command, ",log length is ", len(rf.log), "lastIncludedIndex:", rf.lastIncludedIndex)
 	// 发送AppendEntry请求
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
+			//fmt.Println("start: nextIndex is ", rf.nextIndex[i])
 			if rf.lastIncludedIndex != 0 && rf.nextIndex[i] <= rf.lastIncludedIndex {
 				// 说明需要的log已经被Leader丢弃，需要发送快照
 				args := new(InstallSnapshotArgs)
@@ -927,8 +1011,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) { // ok
 				args.Term = rf.currentTerm
 				args.LeaderId = rf.me
 				args.Entries = make([]Entry, rf.lastIncludedIndex+len(rf.log)-rf.nextIndex[i])
+				//fmt.Println("start: args.Entry length is ", len(args.Entries))
 				copy(args.Entries, rf.log[rf.nextIndex[i]-rf.lastIncludedIndex:])
 				args.PrevLogIndex = rf.nextIndex[i] - 1
+				//fmt.Println("start: args.PrevLogIndex => ", args.PrevLogIndex)
 				args.PrevLogTerm = rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term
 				args.LeaderCommit = rf.commitIndex
 				reply := new(AppendEntriesReply)
@@ -945,11 +1031,16 @@ func (rf *Raft) ticker() {
 	randomSleepTime := rand.Int63n(20) + 30
 	randomElectionTimeout := rand.Int63n(100) + 100
 	for rf.killed() == false {
+		//rf.mu.Lock()
+		//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",term is ", rf.currentTerm, ",my log length is ", len(rf.log), ",lastApplyIndex, ", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",time:", time.Now().UnixMilli(), ", lastCommand ", rf.log[len(rf.log)-1].Command)
+		//rf.mu.Unlock()
 		if rf.identity != 3 {
 			nowTime := time.Now().UnixMilli()
 			if nowTime-rf.lastElectionTime > randomElectionTimeout {
+				//fmt.Println("Index'm ", rf.me, ",election timeout, rf.lastElectionTime:", rf.lastElectionTime, ",nowtime is ", nowTime, ",nowTime-rf.lastElectionTime:", nowTime-rf.lastElectionTime, ",my log length is ", len(rf.log))
 				// 切换候选者身份
 				rf.identity = 2
+				//fmt.Println("861 Index'm ", rf.me, ",identity change from ", oldIdentity, " to ", rf.identity)
 				rf.lastElectionTime = nowTime
 				randomElectionTimeout = rand.Int63n(300) + 1000
 				// 进行预投票
@@ -957,6 +1048,7 @@ func (rf *Raft) ticker() {
 				msg := rf.makeVoteMessage(true)
 				for i := 0; i < len(rf.peers); i++ {
 					if i != rf.me {
+						//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",term is ", rf.currentTerm, ",send prevote request to ", i)
 						reply := new(RequestVoteReply)
 						go rf.sendRequestPreVoteToFollower(i, msg, reply)
 					}
