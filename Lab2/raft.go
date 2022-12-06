@@ -98,6 +98,7 @@ type AppendEntriesArgs struct {
 	PrevLogTerm  int
 	Entries      []Entry
 	LeaderCommit int
+	SendTime     int64
 }
 
 type AppendEntriesReply struct {
@@ -160,6 +161,10 @@ func (rf *Raft) killed() bool { // ok
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) { // ok
 	return rf.currentTerm, rf.identity == 3
+}
+
+func (rf *Raft) GetRaftStateSize() int { // ok
+	return rf.persister.RaftStateSize()
 }
 
 func (rf *Raft) getPersistData() []byte {
@@ -260,7 +265,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 // 请求
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	//fmt.Println("Index'm ", rf.me, ",receive a append from ", args.LeaderId, "args.Term ", args.Term, "log length is ", len(rf.log), ",my lastApplyIndex:", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",entry length:", len(args.Entries), ",args.prevLogIndex:", args.PrevLogIndex, ",args.prevLogTerm:", args.PrevLogTerm, ",my lastIncludeIndex:", rf.lastIncludedIndex, ",my lastIncludeTerm:", rf.lastIncludedTerm)
+	fmt.Println("I'm ", rf.me, ",receive a append from ", args.LeaderId, "args.Term ", args.Term, "log length is ", len(rf.log), ",my lastApplyIndex:", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",entry length:", len(args.Entries), ",args.prevLogIndex:", args.PrevLogIndex, ",args.prevLogTerm:", args.PrevLogTerm, ",my lastIncludeIndex:", rf.lastIncludedIndex, ",my lastIncludeTerm:", rf.lastIncludedTerm, ",argTime ", args.SendTime, ",nowTime:", time.Now().UnixMilli())
 	reply.Term = rf.currentTerm
 	// 请求者的Term小于自己 或者 自己并非follower，拒绝Append
 	if args.Term < rf.currentTerm {
@@ -290,7 +295,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.ConflictTerm = -1
 		reply.ConflictIndex = rf.lastIncludedIndex + len(rf.log)
-		//fmt.Println("Index'm ", rf.me, ",finish receive a append from, PrevLogIndex不存在 ", args.LeaderId, "log length is ", len(rf.log))
+		fmt.Println("Index'm ", rf.me, ",finish receive a append from, PrevLogIndex不存在 ", args.LeaderId, "log length is ", len(rf.log))
 		return
 	}
 	if (args.PrevLogIndex == rf.lastIncludedIndex && args.PrevLogTerm == rf.lastIncludedTerm) || (args.PrevLogIndex > rf.lastIncludedIndex && rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term == args.PrevLogTerm) {
@@ -316,6 +321,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		// 说明是心跳，直接接受Append，然后更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
+			//fmt.Println("update commitINdex")
 			if args.LeaderCommit < rf.lastIncludedIndex+len(rf.log) {
 				rf.commitIndex = args.LeaderCommit
 			} else {
@@ -325,25 +331,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.ConflictIndex = -1
 		reply.ConflictTerm = -1
 		rf.persist()
-		//fmt.Println("Index'm ", rf.me, ",finish receive a append from accept ", args.LeaderId, ",my log length is ", len(rf.log), ",argCommitIndex:", args.LeaderCommit, ",myCommitIndex:", rf.commitIndex)
+		fmt.Println("Index'm ", rf.me, ",finish receive a append from accept ", args.LeaderId, ",my log length is ", len(rf.log), ",argCommitIndex:", args.LeaderCommit, ",myCommitIndex:", rf.commitIndex)
 		return
 	} else {
 		// rf.log[args.PrevLogIndex].Term != args.PrevLogTerm
-		if args.PrevLogIndex == rf.lastIncludedIndex {
+		if args.PrevLogIndex <= rf.lastIncludedIndex {
+			fmt.Println("update reply.ConflictTerm , args.PrevLogIndex == rf.lastIncludedIndex, rf.lastIncludedIndex ", rf.lastIncludedIndex)
 			reply.ConflictTerm = rf.lastIncludedTerm
 		} else if args.PrevLogIndex > rf.lastIncludedIndex {
+			fmt.Println("update reply.ConflictTerm , args.PrevLogIndex == rf.lastIncludedIndex, rf.lastIncludedIndex ", rf.lastIncludedIndex, ",args.PrevLogIndex ", args.PrevLogIndex)
 			reply.ConflictTerm = rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term
 		}
-		for i := args.PrevLogIndex - rf.lastIncludedIndex; i >= 0; i-- {
-			if rf.log[i].Term == reply.ConflictTerm {
-				//fmt.Println("i:", i, ",term:", rf.log[i].Term, ",command:", rf.log[i].Command)
-				reply.ConflictIndex = i + rf.lastIncludedIndex
-			} else {
-				break
+		if args.PrevLogIndex-rf.lastIncludedIndex == 0 {
+			reply.ConflictIndex = rf.lastIncludedIndex
+		} else {
+			for i := args.PrevLogIndex - rf.lastIncludedIndex; i > 0; i-- {
+				if rf.log[i].Term == reply.ConflictTerm {
+					//fmt.Println("i:", i, ",term:", rf.log[i].Term, ",command:", rf.log[i].Command)
+					reply.ConflictIndex = i + rf.lastIncludedIndex
+				} else {
+					break
+				}
 			}
 		}
 		reply.Success = false
-		//fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, ",rf.log[args.PrevLogIndex].Term != args.PrevLogTerm,finish receive a append from ", args.LeaderId, "log length is ", len(rf.log), ",ConflictTerm:", reply.ConflictTerm, ",ConflictIndex:", reply.ConflictIndex, ",PrevlogIndex:", args.PrevLogIndex, ",PrevlogTerm:", args.PrevLogTerm)
+		fmt.Println("Index'm ", rf.me, ",term is ", rf.currentTerm, ",rf.log[args.PrevLogIndex].Term != args.PrevLogTerm,finish receive a append from ", args.LeaderId, "log length is ", len(rf.log), ",ConflictTerm:", reply.ConflictTerm, ",ConflictIndex:", reply.ConflictIndex, ",PrevlogIndex:", args.PrevLogIndex, ",PrevlogTerm:", args.PrevLogTerm)
 		return
 	}
 }
@@ -433,6 +445,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if rf.currentTerm > args.Term || args.LastIncludedIndex <= rf.lastIncludedIndex {
 		return
 	}
+	fmt.Println("raft ", rf.me, ",receive InstallSnapshot from ", args.LeaderId, ",args.LastIncludedIndex ", args.LastIncludedIndex, ",my lastIncludedIndex ", rf.lastIncludedIndex)
 	rf.lastElectionTime = time.Now().UnixMilli()
 	// 检查快照中的lastIncludedIndex是否比自己的log新
 	if args.LastIncludedIndex >= rf.lastIncludedIndex+len(rf.log) {
@@ -446,6 +459,18 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.log = append(rf.log, entry)
 		rf.lastIncludedIndex = args.LastIncludedIndex
 		rf.lastIncludedTerm = args.LastIncludedTerm
+		// complete replace the log
+		msg := ApplyMsg{}
+		msg.Command = nil
+		msg.CommandValid = false
+		msg.CommandIndex = -1
+		msg.SnapshotValid = true
+		msg.Snapshot = rf.snapshot
+		msg.SnapshotIndex = rf.lastIncludedIndex
+		msg.SnapshotTerm = rf.lastIncludedTerm
+		rf.applyCh <- msg
+		rf.lastApplied = rf.lastIncludedIndex
+		rf.commitIndex = rf.lastIncludedIndex
 	} else if args.LastIncludedIndex > rf.lastIncludedIndex {
 		// 发送的快照比自己的快照新，但是没有Log中的新
 		rf.snapshot = make([]byte, len(args.Snapshot))
@@ -456,25 +481,28 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.log = newLog
 		rf.lastIncludedIndex = args.LastIncludedIndex
 		rf.lastIncludedTerm = args.LastIncludedTerm
+		// if snapshot include the log that not commit
+		if rf.lastApplied < rf.lastIncludedIndex {
+			msg := ApplyMsg{}
+			msg.Command = nil
+			msg.CommandValid = false
+			msg.CommandIndex = -1
+			msg.SnapshotValid = true
+			msg.Snapshot = rf.snapshot
+			msg.SnapshotIndex = rf.lastIncludedIndex
+			msg.SnapshotTerm = rf.lastIncludedTerm
+			rf.applyCh <- msg
+			rf.lastApplied = args.LastIncludedIndex
+			if rf.commitIndex < args.LastIncludedIndex {
+				rf.commitIndex = args.LastIncludedIndex
+			}
+		}
 	}
 	//fmt.Println("InstallSnapshot:", "rf.lastIncludedIndex => ", rf.lastIncludedIndex, ",rf.lastIncludedTerm => ", rf.lastIncludedTerm, ",args.lastIncludedIndex => ", args.LastIncludedIndex, ", args.lastIncludedTerm => ", args.LastIncludedTerm, ",lastApplyIndex before:", rf.lastApplied)
 	// 更新ApplyIndex和CommitIndex
-	if rf.lastApplied < rf.lastIncludedIndex {
-		rf.lastApplied = rf.lastIncludedIndex
-	}
-	if rf.commitIndex < rf.lastIncludedIndex {
-		rf.commitIndex = rf.lastIncludedIndex
-	}
+
 	//fmt.Println("InstallSnapshot:", "rf.lastIncludedIndex => ", rf.lastIncludedIndex, ",rf.lastIncludedTerm => ", rf.lastIncludedTerm, ",args.lastIncludedIndex => ", args.LastIncludedIndex, ", args.lastIncludedTerm => ", args.LastIncludedTerm, ",lastApplyIndex after:", rf.lastApplied)
-	msg := ApplyMsg{}
-	msg.Command = nil
-	msg.CommandValid = false
-	msg.CommandIndex = -1
-	msg.SnapshotValid = true
-	msg.Snapshot = rf.snapshot
-	msg.SnapshotIndex = rf.lastIncludedIndex
-	msg.SnapshotTerm = rf.lastIncludedTerm
-	rf.applyCh <- msg
+
 	rf.persister.SaveStateAndSnapshot(rf.getPersistData(), rf.snapshot)
 }
 
@@ -494,6 +522,7 @@ func (rf *Raft) handlerInstallSnapshot(serverIndex int, args *InstallSnapshotArg
 	// 说明应该接受了SnapShot，更新commitIndex
 	if rf.nextIndex[serverIndex] < args.LastIncludedIndex+1 {
 		rf.nextIndex[serverIndex] = args.LastIncludedIndex + 1
+		fmt.Println("518 update rf.nextIndex[", serverIndex, "] ", rf.nextIndex[serverIndex])
 	}
 	if rf.matchIndex[serverIndex] < args.LastIncludedIndex {
 		rf.matchIndex[serverIndex] = args.LastIncludedIndex
@@ -688,7 +717,7 @@ func (rf *Raft) handlerRequestVoteReply(serverIndex int, args *RequestVoteArgs, 
 			// 重置nextIndex和matchIndex
 			for i := 0; i < len(rf.peers); i++ {
 				rf.nextIndex[i] = rf.lastIncludedIndex + len(rf.log)
-				//fmt.Println("update rf.nextIndex[i]:", rf.nextIndex[i])
+				fmt.Println("update rf.nextIndex[", i, "]:", rf.nextIndex[i])
 				if i == rf.me {
 					rf.matchIndex[i] = rf.nextIndex[i] - 1
 				} else {
@@ -732,6 +761,7 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 	if reply.Success {
 		//fmt.Println("reply success: last nextIndex => ", rf.nextIndex[serverIndex], ",receive length is ", args.PrevLogIndex+len(args.Entries)+1)
 		rf.nextIndex[serverIndex] = args.PrevLogIndex + len(args.Entries) + 1
+		fmt.Println("757 update rf.nextIndex[", serverIndex, "] ", rf.nextIndex[serverIndex])
 		rf.matchIndex[serverIndex] = rf.nextIndex[serverIndex] - 1
 	} else {
 		//fmt.Println("Index'm ", rf.me, ",appear conflict")
@@ -739,6 +769,7 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 		if reply.ConflictTerm == -1 {
 			if reply.ConflictIndex >= 0 {
 				rf.nextIndex[serverIndex] = reply.ConflictIndex
+				fmt.Println("765 update rf.nextIndex[", serverIndex, "] ", rf.nextIndex[serverIndex])
 			}
 		} else {
 			// 在自己的log中寻找conflictTerm
@@ -746,6 +777,7 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 			for i := args.PrevLogIndex - rf.lastIncludedIndex; i > 0; i-- {
 				if rf.log[i].Term == reply.ConflictTerm {
 					rf.nextIndex[serverIndex] = rf.lastIncludedIndex + i + 1
+					fmt.Println("773 update rf.nextIndex[", serverIndex, "] ", rf.nextIndex[serverIndex])
 					flag = true
 					break
 				}
@@ -755,6 +787,7 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 			}
 			if !flag { // 没有找到conflictTerm
 				rf.nextIndex[serverIndex] = reply.ConflictIndex
+				fmt.Println("783 update rf.nextIndex[", serverIndex, "] ", rf.nextIndex[serverIndex])
 				//fmt.Println("don't find ConflictTerm, set rf.nextIndex[serverIndex]:", rf.nextIndex[serverIndex])
 			} else {
 				//fmt.Println("find ConflictTerm, set rf.nextIndex[serverIndex]:", rf.nextIndex[serverIndex])
@@ -765,8 +798,13 @@ func (rf *Raft) handlerAppendEntriesReply(serverIndex int, args *AppendEntriesAr
 
 func (rf *Raft) sendHeartbeatToFollower(serverIndex int) { // ok
 	rf.mu.Lock()
+	if rf.identity != 3 {
+		rf.mu.Unlock()
+		return
+	}
 	//fmt.Println("sendHeartbeatToFollower: get lock ")
-	if rf.lastIncludedIndex != 0 && rf.nextIndex[serverIndex] <= rf.lastIncludedIndex {
+	if rf.nextIndex[serverIndex] <= rf.lastIncludedIndex {
+		fmt.Println("send snapshot as heartbeat, rf.nextIndex[serverIndex] ", rf.nextIndex[serverIndex], ",rf.lastIncludedIndex ", rf.lastIncludedIndex)
 		// 说明需要的log已经被Leader丢弃，需要发送快照
 		args := new(InstallSnapshotArgs)
 		args.Term = rf.currentTerm
@@ -782,7 +820,8 @@ func (rf *Raft) sendHeartbeatToFollower(serverIndex int) { // ok
 	}
 	args := new(AppendEntriesArgs)
 	args.PrevLogIndex = rf.nextIndex[serverIndex] - 1
-	//fmt.Println("sendHeartbeatToFollower: args.PrevLogIndex => ", args.PrevLogIndex)
+	args.SendTime = time.Now().UnixMilli()
+	fmt.Println("sendHeartbeatToFollower ", serverIndex, ": args.PrevLogIndex => ", args.PrevLogIndex, ",rf.lastIncludedIndex: ", rf.lastIncludedIndex)
 	if args.PrevLogIndex == rf.lastIncludedIndex {
 		args.PrevLogTerm = rf.lastIncludedTerm
 	} else {
@@ -913,9 +952,12 @@ func (rf *Raft) CheckHeartbeat() { // ok
 func (rf *Raft) CheckApplyCommand() { // ok
 	// 当Raft没有被Kill，就一直运行
 	for rf.killed() == false {
+		//fmt.Println("I'm raft ", rf.me, ", my lastApplyIndex ", rf.lastApplied, ",my commitIndex ", rf.commitIndex)
+		//fmt.Println("I'm raft ", rf.me, ", preprare get the CheckApplyCommand lock")
 		rf.mu.Lock()
-		//fmt.Println("Index'm ", rf.me, ", CheckApplyCommand: get lock, lastApplu, ", rf.lastApplied, ",commitIndex:", rf.commitIndex, ",lastIncludedIndex:", rf.lastIncludedIndex, ",log length:", len(rf.log))
+		//fmt.Println("I'm raft ", rf.me, ", get the lock to check identity")
 		if rf.identity == 3 {
+			//fmt.Println("I'm raft ", rf.me, ", get the lock to check identity, is leader")
 			// 检查是否能够更新commitIndex
 			sortedMatchIndex := make([]int, len(rf.peers))
 			copy(sortedMatchIndex, rf.matchIndex)
@@ -932,12 +974,14 @@ func (rf *Raft) CheckApplyCommand() { // ok
 		nowCommitIndex := rf.commitIndex
 		if rf.lastApplied < nowCommitIndex {
 			for i := rf.lastApplied + 1; i <= nowCommitIndex; i++ {
+				//fmt.Println("start update lastApplyIndex, prepare get lock")
 				rf.mu.Lock()
-				if i <= rf.lastApplied {
+				//fmt.Println("start update lastApplyIndex, get lock")
+				if i <= rf.lastApplied || i <= rf.lastIncludedIndex {
+					//fmt.Println("i <= rf.lastApplied, lose lock")
 					rf.mu.Unlock()
 					break
 				}
-				//fmt.Println("Index'm ", rf.me, ",log length: ", len(rf.log), ",lastIncludedIndex:", rf.lastIncludedIndex, "rf.lastApply:", rf.lastApplied)
 				//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",log length ", len(rf.log), ",applyIndex ", rf.lastApplied+1, ",command is ", rf.log[i-rf.lastIncludedIndex].Command)
 				msg := ApplyMsg{}
 				msg.CommandIndex = i
@@ -947,17 +991,25 @@ func (rf *Raft) CheckApplyCommand() { // ok
 				msg.SnapshotIndex = -1
 				msg.SnapshotTerm = -1
 				msg.SnapshotValid = false
+				//fmt.Println("prepare lose lock and send msg to applych")
 				rf.mu.Unlock()
+				//fmt.Println("lose lock and send msg to applych")
 				rf.applyCh <- msg
+				//fmt.Println("I'm raft", rf.me, ",prepare get lock")
 				rf.mu.Lock()
+				//fmt.Println("I'm raft", rf.me, ",get lock")
 				if rf.lastApplied+1 == i {
 					rf.lastApplied++
 				}
 				rf.mu.Unlock()
+				//fmt.Println("I'm raft", rf.me, ",lose lock, lastApplyId ", i, ",nowCommitIndex", nowCommitIndex)
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
+		//fmt.Println("I'm raft", rf.me, ",prepare to sleep")
+		time.Sleep(5 * time.Millisecond)
+		//fmt.Println("I'm raft", rf.me, ",sleep finish, state", rf.killed())
 	}
+	//fmt.Println("I' raft ", rf.me, ",I was killed")
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -990,12 +1042,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) { // ok
 	rf.nextIndex[rf.me] = index + 1
 	rf.matchIndex[rf.me] = index
 	rf.persist()
-	//fmt.Println("Index'm ", rf.me, ",identity is ", rf.identity, ",receive a command ", command, ",log length is ", len(rf.log), "lastIncludedIndex:", rf.lastIncludedIndex)
+	fmt.Println("I'm ", rf.me, ",identity is ", rf.identity, ",receive a command ", command, ",log length is ", len(rf.log), "lastIncludedIndex:", rf.lastIncludedIndex)
 	// 发送AppendEntry请求
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
 			//fmt.Println("start: nextIndex is ", rf.nextIndex[i])
-			if rf.lastIncludedIndex != 0 && rf.nextIndex[i] <= rf.lastIncludedIndex {
+			if rf.nextIndex[i] <= rf.lastIncludedIndex {
+				//fmt.Println("raft send snapshot")
 				// 说明需要的log已经被Leader丢弃，需要发送快照
 				args := new(InstallSnapshotArgs)
 				args.Term = rf.currentTerm
@@ -1005,17 +1058,24 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) { // ok
 				args.Snapshot = make([]byte, len(rf.snapshot))
 				copy(args.Snapshot, rf.snapshot)
 				reply := new(InstallSnapshotReply)
+				fmt.Println("send snapshot in start, rf.nextIndex[serverIndex] ", rf.nextIndex[i], ",rf.lastIncludedIndex ", rf.lastIncludedIndex)
 				go rf.sendInstallSnapshotToFollower(i, args, reply)
 			} else {
 				args := new(AppendEntriesArgs)
 				args.Term = rf.currentTerm
 				args.LeaderId = rf.me
 				args.Entries = make([]Entry, rf.lastIncludedIndex+len(rf.log)-rf.nextIndex[i])
+				args.SendTime = time.Now().UnixMilli()
 				//fmt.Println("start: args.Entry length is ", len(args.Entries))
 				copy(args.Entries, rf.log[rf.nextIndex[i]-rf.lastIncludedIndex:])
 				args.PrevLogIndex = rf.nextIndex[i] - 1
+				fmt.Println("raft send appendentry, args.PrevLogIndex ", args.PrevLogIndex, ",rf.lastIncludedIndex ", rf.lastIncludedIndex, ",rf.nextIndex[", i, "] = ", rf.nextIndex[i])
 				//fmt.Println("start: args.PrevLogIndex => ", args.PrevLogIndex)
-				args.PrevLogTerm = rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term
+				if args.PrevLogIndex-rf.lastIncludedIndex == 0 {
+					args.PrevLogTerm = rf.lastIncludedTerm
+				} else {
+					args.PrevLogTerm = rf.log[args.PrevLogIndex-rf.lastIncludedIndex].Term
+				}
 				args.LeaderCommit = rf.commitIndex
 				reply := new(AppendEntriesReply)
 				go rf.sendAppendEntriesToFollower(i, args, reply)

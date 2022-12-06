@@ -10,3 +10,6 @@
 **Lab2D**：The code can pass the Test2D for hundreds of times without error.
 
 **Lab3A**：The code can pass the Test3A for hundreds of times without error.
+
+**Lab3B**：The code can pass the Test3B for hundreds of times without error.
+

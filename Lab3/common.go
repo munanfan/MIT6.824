@@ -1,12 +1,13 @@
 package kvraft
 
 const (
-	OK        = "OK"
-	TIMEOUT   = "TIMEOUT"
-	REPEAT    = "REPEAT"
-	NOKEY     = "NOKEY"
-	NOTLEADER = "NOTLEADER"
-	KILLED    = "KILLED"
+	OK              = "OK"
+	TIMEOUT         = "TIMEOUT"
+	REPEAT          = "REPEAT"
+	NOKEY           = "NOKEY"
+	NOT_LEADER      = "NOTLEADER"
+	KILLED          = "KILLED"
+	SESSION_EXPIRED = "SESSION_EXPIRED"
 )
 
 const (
@@ -25,22 +26,22 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Sender   int64
-	CmdIndex int
+	ClientId    int64
+	SequenceNum int64
 }
 
 type PutAppendReply struct {
-	Err Err
+	State Err
 }
 
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
-	Sender   int64
-	CmdIndex int
+	ClientId    int64
+	SequenceNum int64
 }
 
 type GetReply struct {
-	Err   Err
-	Value string
+	State    Err
+	Response string
 }

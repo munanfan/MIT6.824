@@ -2,7 +2,7 @@ package kvraft
 
 import (
 	"6.824/labrpc"
-	"sync"
+	"fmt"
 )
 import "crypto/rand"
 import "math/big"
@@ -10,10 +10,9 @@ import "math/big"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	leaderIndex int
-	cmdIndex    int
-	mu          sync.Mutex
 	me          int64
+	sequenceNum int64
+	leaderIndex int
 }
 
 func nrand() int64 {
@@ -23,19 +22,17 @@ func nrand() int64 {
 	return x
 }
 
+func (ck *Clerk) tryAnotherLeaderIndex() {
+	ck.leaderIndex = (ck.leaderIndex + 1) % len(ck.servers)
+}
+
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
-	ck.leaderIndex = 0
-	ck.mu = sync.Mutex{}
-	ck.cmdIndex = 1
 	ck.me = nrand()
+	ck.sequenceNum = 1
 	return ck
-}
-
-func (ck *Clerk) tryAnotherLeaderIndex() {
-	ck.leaderIndex = (ck.leaderIndex + 1) % len(ck.servers)
 }
 
 // fetch the current value for a key.
@@ -50,35 +47,33 @@ func (ck *Clerk) tryAnotherLeaderIndex() {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
 	// make request args
-	args := GetArgs{}
+	args := new(GetArgs)
 	reply := new(GetReply)
 	args.Key = key
-	args.Sender = ck.me
-	ck.mu.Lock()
-	args.CmdIndex = ck.cmdIndex
-	ck.cmdIndex++
-	ck.mu.Unlock()
+	args.ClientId = ck.me
+	args.SequenceNum = ck.sequenceNum
+	fmt.Println("ck ", ck.me, ",send a get request, sequenceNum ", args.SequenceNum)
 	for {
 		ok := ck.servers[ck.leaderIndex].Call("KVServer.Get", args, reply)
 		// 重发五次，不行换Server发送
-		repeatTime := 0
 		for ok == false {
-			if repeatTime >= 5 {
-				repeatTime = 0
-				ck.tryAnotherLeaderIndex()
-			}
-			repeatTime++
+			ck.tryAnotherLeaderIndex()
 			ok = ck.servers[ck.leaderIndex].Call("KVServer.Get", args, reply)
 		}
 		// send success
-		if reply.Err == OK || reply.Err == REPEAT {
+		if reply.State == OK || reply.State == REPEAT {
 			// 成功，或者重复提交 都算成功执行
-			return reply.Value
-		} else if reply.Err == NOTLEADER || reply.Err == KILLED {
+			ck.sequenceNum++
+			fmt.Println("ck ", ck.me, ",ok, sequenceNum ", args.SequenceNum)
+			return reply.Response
+		} else if reply.State == NOT_LEADER || reply.State == KILLED || reply.State == TIMEOUT {
 			// 换成另外一个Leader
 			ck.tryAnotherLeaderIndex()
+			fmt.Println("ck ", ck.me, ",change another leader, sequenceNum ", args.SequenceNum)
+			continue
 		}
 		// 超时自动重新发送
+		fmt.Println("TIMEOUT, send again")
 	}
 }
 
@@ -91,37 +86,32 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
-	args := PutAppendArgs{}
-	args.Op = op
+	// make request args
+	args := new(PutAppendArgs)
+	reply := new(GetReply)
 	args.Key = key
 	args.Value = value
-	args.Sender = ck.me
-	ck.mu.Lock()
-	args.CmdIndex = ck.cmdIndex
-	ck.cmdIndex++
-	ck.mu.Unlock()
-	reply := new(PutAppendReply)
+	args.Op = op
+	args.ClientId = ck.me
+	args.SequenceNum = ck.sequenceNum
+	fmt.Println("ck ", ck.me, ",send a putappend request, sequenceNum ", args.SequenceNum)
 	for {
-		// check kvserver state
 		ok := ck.servers[ck.leaderIndex].Call("KVServer.PutAppend", args, reply)
 		// 重发五次，不行换Server发送
-		repeatTime := 0
 		for ok == false {
-			if repeatTime >= 5 {
-				repeatTime = 0
-				ck.tryAnotherLeaderIndex()
-			}
-			repeatTime++
+			ck.tryAnotherLeaderIndex()
 			ok = ck.servers[ck.leaderIndex].Call("KVServer.PutAppend", args, reply)
 		}
 		// send success
-		if reply.Err == OK || reply.Err == REPEAT {
+		if reply.State == OK || reply.State == REPEAT {
 			// 成功，或者重复提交 都算成功执行
+			ck.sequenceNum++
+			fmt.Println("ck ", ck.me, ",ok, sequenceNum ", args.SequenceNum)
 			return
-		} else if reply.Err == NOTLEADER || reply.Err == KILLED {
+		} else if reply.State == NOT_LEADER || reply.State == KILLED || reply.State == TIMEOUT {
 			// 换成另外一个Leader
 			ck.tryAnotherLeaderIndex()
+			fmt.Println("ck ", ck.me, ",change another leader, sequenceNum ", args.SequenceNum)
 		}
 		// 超时自动重新发送
 	}
