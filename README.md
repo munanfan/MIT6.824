@@ -1,15 +1,16 @@
 # MIT6.824
-**Lab1**：Pass all test(You may need to upgrade the bash version to pass the test).
+**Lab1：**通过测试至少200次，如果报错`wait -n`类似的错误，升级bash到高一点的版本就可以解决这个问题。
 
-**Lab2A**：Pass all test.
+**Lab2：**通过测试至少200次。
 
-**Lab2B**：Modify the code that completed before. At most time, this code can pass the Test2B. Sometimes, recommit solution will appear, maybe there are some idea that I didn’t know.
+**Lab3：**通过测试至少200次。
 
-**Lab2C**：The code can pass the Test2C for thousands of times without error.
+**Lab3：**通过测试至少200次。
 
-**Lab2D**：The code can pass the Test2D for hundreds of times without error.
+## 总结
 
-**Lab3A**：The code can pass the Test3A for hundreds of times without error.
+6.824课程对于学习分布式确实是一个非常好的学习教程，在空闲时间完成全部4个Lab大概用了2个月多一点的时间，学习到了很多东西，对于分布式也有了更深一步的了解。之前看过`Redis`的原理，本来对里面的主从模式、集群模式一知半解，做了4个Lab之后不敢说完全精通，但是对这些知识起码能够流畅的讲解出来，自己也能够了解其中的原理，如何保证整个服务的高并发、高可用。
 
-**Lab3B**：The code can pass the Test3B for hundreds of times without error.
+第一次使用Go，之前完全没接触过，对于语法说实话写着比较别扭，但有些用法，比如`GoRoutine`等等使用起来体验还挺不错。之前对于多线程、并发什么的接触比较少，在这写Lab中确实也给我造成了很大的难题，两个多月的时间可以说大部分都在Debug上面，处理不同的Server并发时出现的各种不一致、死锁等问题，一是让我更加到多线程相较于单线程确实能够大大提高效率，跑满CPU的感觉还是很爽的；而是让我感受到了日志对于一个服务或者应用来说的重要性，尤其是对于分布式服务，如何能够让日志有效的反映出服务运行时发送的异常非常重要，在写代码的过程中也写了无数的`fmt.Println`，从几十万行的日志信息中分析哪里出了问题。
 
+在一开始，当我`clone`6.824的Code的时候，看看大量的文件夹和不太熟悉的Go语句，没想到自己能够真正的坚持下来完成这个小项目，如今在看项目目录中的代码，已经是非常熟悉。动手写代码是非常重要的，在阅读原理或者单纯的看某些知识的时候，大多都是以为能够很简单的实现这些东西，但是当你真的去设计去实现，才会发现一个又一个细节方面的小问题，收获很大，也算是画上了一个圆满的句号。
